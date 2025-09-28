@@ -1,0 +1,86 @@
+name: Create release
+
+on:
+  create:
+    tags:
+      - release-*
+
+env:
+  uploadedArtifactName: gdb-tricore-linux-amd64
+
+jobs:
+  release:
+    if: startsWith(github.ref, 'refs/tags/') && github.event_name == 'create'
+    runs-on: [ubuntu-latest]
+    permissions:
+      contents: write
+      pull-requests: write
+      repository-projects: write
+    needs: [build]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.uploadedArtifactName }}
+          path: ${{ github.workspace }}
+      - name: Display structure of downloaded files
+        run: ls -R
+        working-directory: ${{ github.workspace }}
+      - name: create release
+        id: createRelease
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: ${{ github.ref }}
+      - name: Upload Release Assets
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          upload_url: ${{ steps.createRelease.outputs.upload_url }}
+          asset_path: ./gdb-tricore-linux-amd64.tar.gz
+          asset_name: gdb-tricore-linux-amd64.tar.gz
+          asset_content_type: application/gzip
+
+  build:
+    name: Linux Build
+
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install tools Linux
+        run: |
+          sudo apt-get update && sudo apt-get install texinfo bison flex python3-dev libdebuginfod-dev python3-pip python-is-python3 -y --no-install-recommends
+          python -m pip install --upgrade setuptools --break-system-packages
+
+      - name: Install Python 3.10 for tricore gdb
+        run: |
+          sudo add-apt-repository -y ppa:deadsnakes/ppa
+          sudo apt-get update -y
+          sudo apt-get install -y python3.10 python3.10-dev
+          sudo update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1
+          sudo update-alternatives --install /usr/bin/python python /usr/bin/python3.10 2
+          sudo update-alternatives --set python /usr/bin/python3.10
+
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          submodules: "true"
+          ref: ${{ github.ref }}
+
+      - name: build
+        run: |
+          CFLAGS="-Wno-error -fcommon" ./configure --with-python=/usr/bin/python --host=x86_64-linux-gnu --target=tricore-elf --program-prefix=tricore-elf- --disable-nls --disable-itcl --disable-tk --disable-tcl --disable-winsup --disable-gdbtk --disable-libgui --disable-rda --disable-sid --disable-sim --disable-newlib --disable-libgloss --disable-gas --disable-ld --disable-binutils --disable-gprof --disable-source-highlight --with-system-zlib --prefix=$(pwd)/dist --disable-werror --with-python
+          make -j $(nproc)
+          make -C gdb install
+
+      - name: Create tar.gz archive
+        run: |
+          cd dist && tar -czf ../gdb-tricore-linux-amd64.tar.gz *
+          cd .. && ls -la gdb-tricore-linux-amd64.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        if: startsWith(github.ref, 'refs/tags/') && github.event_name == 'create'
+        with:
+          name: ${{ env.uploadedArtifactName }}
+          path: gdb-tricore-linux-amd64.tar.gz
